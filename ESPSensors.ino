@@ -1,4 +1,11 @@
+#define WEB_SERVER
+#define MQTT
+#define OLED
+#define DH11
+
+#ifdef MQTT
 #include <PubSubClient.h>
+#endif
 
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
@@ -9,8 +16,8 @@
 const char* ssid = "El Poni Pisador";
 const char* password = "Anillo_Unico";
 
-WiFiClient espClient;
-ESP8266WebServer server(80);
+WiFiClient espClient;   //TCP connection
+ESP8266WebServer server(80);    //
 IPAddress brokerAddress(192,168,1,92);
 
 PubSubClient MQTTclient(brokerAddress, 1883, espClient);
