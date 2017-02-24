@@ -1,10 +1,16 @@
 #define WEB_SERVER
 #define MQTT
 #define OLED
-#define DH11
+#define DHT22
 
 #ifdef MQTT
-#include <PubSubClient.h>
+  #include <PubSubClient.h>
+#endif
+
+#ifdef DHT22
+  #include <DHT.h>
+  #define DHTTYPE     DHT22   // DHT 11
+  #define DHT_PIN     D4
 #endif
 
 #include <ESP8266WiFi.h>
@@ -21,6 +27,11 @@ ESP8266WebServer server(80);    //
 IPAddress brokerAddress(192,168,1,92);
 
 PubSubClient MQTTclient(brokerAddress, 1883, espClient);
+
+#ifdef DHT22
+  DHT tempSensor(DHT_PIN, DHTTYPE);
+  
+#endif
 
 int counter;
 char MQTTvalue[20];
@@ -87,8 +98,14 @@ void setup(void){
   Serial.println("HTTP server started");
 
   //MQTT
-  MQTTclient.setServer(brokerAddress, 1883);
-  MQTTclient.setCallback(callback);
+  #ifdef MQTT
+    MQTTclient.setServer(brokerAddress, 1883);
+    MQTTclient.setCallback(callback);
+  #endif
+
+  #ifdef DHT22
+    tempSensor.begin();
+  #endif
 }
 
 void loop(void){
@@ -101,12 +118,37 @@ void loop(void){
     MQTTclient.subscribe("home/temp");
   }
 
+  #ifdef DHT22
+  
+    //tempAns = tempSensor.read11(DHT11_PIN);
+    float RH = tempSensor.readHumidity();
+    // Read temperature as Celsius (the default)
+    float T = tempSensor.readTemperature();
+
+    // Check if any reads failed and exit early (to try again).
+    if (isnan(RH) || isnan(T)) {
+      Serial.println("Failed to read from DHT sensor!");
+    }
+  
+    snprintf(MQTTvalue, 20, "%f", RH);
+    MQTTclient.publish("home/RH", MQTTvalue);
+    Serial.print("Humidity:");
+    Serial.println(RH);
+  
+    snprintf(MQTTvalue, 20, "%f", T);
+    MQTTclient.publish("home/T", MQTTvalue);
+    Serial.print("Temperature");
+    Serial.println(T);
+    
+  #endif
+
   snprintf(MQTTvalue, 20, "%d", counter);
   MQTTclient.publish("home/counter", MQTTvalue);
   
   MQTTclient.loop();
   delay(2000);
 }
+
 
 void reconnect() {
   // Loop until we're reconnected
