@@ -9,7 +9,7 @@
 
 #ifdef DHT22
   #include <DHT.h>
-  #define DHTTYPE     DHT22   // DHT 11
+  #define DHTTYPE     DHT11   // DHT 11
   #define DHT_PIN     D4
 #endif
 
@@ -34,7 +34,7 @@ PubSubClient MQTTclient(brokerAddress, 1883, espClient);
 #endif
 
 int counter;
-char MQTTvalue[20];
+char MQTTvalue[64];
 
 
 const int led = 13;
@@ -129,24 +129,26 @@ void loop(void){
     if (isnan(RH) || isnan(T)) {
       Serial.println("Failed to read from DHT sensor!");
     }
-  
-    snprintf(MQTTvalue, 20, "%f", RH);
+
+    dtostrf(RH, 1, 1, MQTTvalue);
+    //snprintf(MQTTvalue, 64, "%f", RH);
     MQTTclient.publish("home/RH", MQTTvalue);
-    Serial.print("Humidity:");
+    Serial.print("Humidity: ");
     Serial.println(RH);
-  
-    snprintf(MQTTvalue, 20, "%f", T);
+
+    dtostrf(T, 1, 1, MQTTvalue);
+    //snprintf(MQTTvalue, 64, "%f", T);
     MQTTclient.publish("home/T", MQTTvalue);
-    Serial.print("Temperature");
+    Serial.print("Temperature: ");
     Serial.println(T);
     
   #endif
 
-  snprintf(MQTTvalue, 20, "%d", counter);
+  snprintf(MQTTvalue, 64, "%d", counter);
   MQTTclient.publish("home/counter", MQTTvalue);
   
   MQTTclient.loop();
-  delay(2000);
+  delay(5000);
 }
 
 
