@@ -4,6 +4,7 @@
 #include <ESP8266mDNS.h>
 //#include <string.h>
 #include "mqtt_cfg.h"
+#include "dataPoint.h"
 
 #define WEB_SERVER
 #define MQTT
@@ -15,18 +16,11 @@
  * 
  * (només n'hi pot haver un de definit)
 */
-#define SENSOR_ID   "D1m_2"
-#define SENSOR_LOC  0
+#define SENSOR_ID   "S3"
+#define SENSOR_LOC  2
 #define SENSOR_ROOM 1
 
 /*********************************************/
-
-#ifdef MQTT
-  #include <PubSubClient.h>
-  #define MAX_MQTT_PLACES   10
-  #define MAX_MQTT_ROOMS    15
-  #define MAX_MQTT_STRING_LENGTH    8
-#endif
 
 #ifdef DHT22
   #include <DHT.h>
@@ -35,8 +29,7 @@
 #endif
 
 #define HW_PIN_LED  13
-
-char * dummyChar[32];
+#define NUM_DATA_POINTS 15
 
 /********************************************
  * Informació sobre la WiFi
@@ -62,11 +55,13 @@ ESP8266WebServer webSrv(80);
 IPAddress brokerAddress(192,168,1,92);
 PubSubClient MQTTclient(brokerAddress, 1883, espClient);
 
-char places[MAX_MQTT_PLACES][MAX_MQTT_STRING_LENGTH+1]={"home", "gufe", "cosu", "mollo", "vella","","","","",""};
-int places_count = 5;
+char locations[MAX_MQTT_LOCATIONS][MAX_MQTT_STRING_LENGTH+1]={"home", "gufe", "cosu", "mollo", "vella","","","","",""};
+int locations_count = 5;
 char rooms[MAX_MQTT_ROOMS][MAX_MQTT_STRING_LENGTH+1]={"menjad","cuina","habit1","habit2","habit3","estudi","lavabo1","lavabo2","taller","golfes","traster","terras","jardi","soterr"};
 int rooms_count = 14;
 char MQTTvalue[64];
+char MQTTtag[MAX_MQTT_TAG_LENGTH];
+
 /************************************************/
 
 
@@ -77,10 +72,10 @@ char devId[MAX_MQTT_STRING_LENGTH+1] = {SENSOR_ID};
 char devLocation[MAX_MQTT_STRING_LENGTH+1];
 char devRoom[MAX_MQTT_STRING_LENGTH+1];
 
-//memcpy(devLocation, &places[MAX_MQTT_PLACES], sizeof(char)*(MAX_MQTT_STRING_LENGTH+1));
-//memcpy(devRoom, &rooms[MAX_MQTT_ROOMS], sizeof(char)*(MAX_MQTT_STRING_LENGTH+1));
+dataPoint data[NUM_DATA_POINTS];
 
 /***********************************************/
+
 #ifdef DHT22
   DHT tempSensor(DHT_PIN, DHTTYPE);
 #endif
@@ -93,12 +88,38 @@ void setup(void){
   pinMode(HW_PIN_LED, OUTPUT);
   //digitalWrite(HW_PIN_LED, 0);
   Serial.begin(115200);
+
+  //Inicialització de les variables del sistema
+  strcpy(devLocation, locations[SENSOR_LOC]);
+  strcpy(devRoom, rooms[SENSOR_ROOM]);
+
+  //Inicialització de les variables monitoritzades
+  data[1].ID = 1;
+  data[1].SetName("ID");
+  data[1].SetcValue(devId);
+  //data[1].SetTag("sensors/");
+  
+  data[2].ID = 2;
+  data[2].SetName("IPAddr");
+  data[2].SetcValue("x.1.113");
+  //data[2].SetTag("sensors/");
+  
+  data[3].ID = 1;
+  data[3].SetName("Temp");
+  data[3].SetcValue("");
+  //data[1].SetTag("sensors/");
+  
+  data[4].ID = 1;
+  data[4].SetName("HR");
+  data[4].SetcValue("");
+  //data[4].SetTag("sensors/");
+  
   
   Serial.println("");
   Serial.println("*** Sensor DATA ***");
   Serial.print("-> Sensor ID: "); Serial.println(devId);
-  Serial.print("-> Sensor location: "); Serial.println(places[SENSOR_LOC]);//devLocation);
-  Serial.print("-> Sensor room: "); Serial.println(rooms[SENSOR_ROOM]);
+  Serial.print("-> Sensor location: "); Serial.println(devLocation);//devLocation);
+  Serial.print("-> Sensor room: "); Serial.println(devRoom);
   Serial.println("*******************");
   
   WiFi.begin(ssid, password);
@@ -109,6 +130,7 @@ void setup(void){
     delay(500);
     Serial.print(".");
   }
+  
   Serial.println("");
   Serial.print("Connected to ");
   Serial.println(ssid);
@@ -118,6 +140,7 @@ void setup(void){
   if (MDNS.begin("esp8266")) {
     Serial.println("MDNS responder started");
   }
+  
   //WebServer[begin]
   webSrv.on("/", webSrv_handleRoot);
   webSrv.on("/inline", [](){
@@ -168,7 +191,9 @@ void loop(void){
       //dtostrf(RH, 1, 1, strRH);
       //snprintf(MQTTvalue, 64, "%f", RH);
       dtostrf(RH, 1, 1, MQTTvalue);
-      MQTTclient.publish("home/S3/RH", MQTTvalue);
+
+      snprintf(MQTTtag, MAX_MQTT_TAG_LENGTH, "%s/%s/%s", devLocation, devRoom, "RH");
+      MQTTclient.publish(MQTTtag, MQTTvalue);
       Serial.print("Humidity: ");
       Serial.println(RH);
     } else {
@@ -180,7 +205,8 @@ void loop(void){
       //dtostrf(T, 1, 1, MQTTvalue);
       //snprintf(MQTTvalue, 64, "%f", T);
       dtostrf(T, 1, 1, MQTTvalue);
-      MQTTclient.publish("home/S3/T", MQTTvalue);
+      snprintf(MQTTtag, MAX_MQTT_TAG_LENGTH, "%s/%s/%s", devLocation, devRoom, "T");
+      MQTTclient.publish(MQTTtag, MQTTvalue);
       Serial.print("Temperature: ");
       Serial.println(T);
      } else {
@@ -188,9 +214,15 @@ void loop(void){
      }
    
   #endif
+
+  //Publica l'ID a 'devLocation/devRoom/ID'
+  snprintf(MQTTtag, MAX_MQTT_TAG_LENGTH, "%s/%s/%s", devLocation, devRoom, "ID");
+  MQTTclient.publish(MQTTtag, devId);
   
-  snprintf(MQTTvalue, 64, "%d", counter);
-  MQTTclient.publish("home/S3/counter", MQTTvalue);
+  //Publica el comptador a 'devLocation/devRoom/counter'
+  snprintf(MQTTvalue, MAX_MQTT_TAG_LENGTH, "%d", counter);
+  snprintf(MQTTtag, MAX_MQTT_TAG_LENGTH, "%s/%s/%s", devLocation, devRoom, "counter");
+  MQTTclient.publish(MQTTtag, MQTTvalue);
   
   MQTTclient.loop();
   delay(5000);
