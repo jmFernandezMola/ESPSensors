@@ -1,9 +1,14 @@
+//#include <PubSubClient.h>
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
-//#include <string.h>
-#include "mqtt_cfg.h"
+//#include <map>
+
+//#ifdef MQTT
+	#include "mqtt_cfg.h"
+//#endif // MQTT
+
 #include "dataPoint.h"
 
 #define WEB_SERVER
@@ -17,8 +22,8 @@
  * (només n'hi pot haver un de definit)
 */
 #define SENSOR_ID   "S3"
-#define SENSOR_LOC  2
-#define SENSOR_ROOM 1
+#define SENSOR_LOC  0
+#define SENSOR_ROOM 5
 
 /*********************************************/
 
@@ -29,7 +34,7 @@
 #endif
 
 #define HW_PIN_LED  13
-#define NUM_DATA_POINTS 15
+#define MAX_DATA_POINTS 15
 
 /********************************************
  * Informació sobre la WiFi
@@ -41,18 +46,21 @@ const char* password = "Anillo_Unico";
 /**************************************************/
 
 
-
 /********************************************
  * Servidor web
  */
 ESP8266WebServer webSrv(80);
-
 /***************************************************/
 
 /********************************************
  * Connexió MQTT
  */
+/*local*/
 IPAddress brokerAddress(192,168,1,92);
+uint16_t brokerPort = 1883;
+	/*remote*/
+	//char brokerAddress[] = { "elponipisador.ddns.net" };
+	//uint16_t brokerPort = 61883;
 PubSubClient MQTTclient(brokerAddress, 1883, espClient);
 
 char locations[MAX_MQTT_LOCATIONS][MAX_MQTT_STRING_LENGTH+1]={"home", "gufe", "cosu", "mollo", "vella","","","","",""};
@@ -61,8 +69,21 @@ char rooms[MAX_MQTT_ROOMS][MAX_MQTT_STRING_LENGTH+1]={"menjad","cuina","habit1",
 int rooms_count = 14;
 char MQTTvalue[64];
 char MQTTtag[MAX_MQTT_TAG_LENGTH];
-
 /************************************************/
+
+/************************************************
+* Definició de les variables / DataPoints
+*/
+#define DP_ID			0
+#define DP_IPADDR		1
+#define DP_SSID			2
+#define DP_WEBURL		3
+#define DP_LOCATION		4
+#define	DP_ROOM			5
+#define DP_TEMP			6
+#define DP_HR			7
+uint usedDataPoints = 8;
+/***********************************************/
 
 
 /************************************************
@@ -72,7 +93,7 @@ char devId[MAX_MQTT_STRING_LENGTH+1] = {SENSOR_ID};
 char devLocation[MAX_MQTT_STRING_LENGTH+1];
 char devRoom[MAX_MQTT_STRING_LENGTH+1];
 
-dataPoint data[NUM_DATA_POINTS];
+dataPoint dataPoints[MAX_DATA_POINTS];
 
 /***********************************************/
 
@@ -85,6 +106,7 @@ char * strT;
 char * strRH;
 
 void setup(void){
+
   pinMode(HW_PIN_LED, OUTPUT);
   //digitalWrite(HW_PIN_LED, 0);
   Serial.begin(115200);
@@ -94,27 +116,9 @@ void setup(void){
   strcpy(devRoom, rooms[SENSOR_ROOM]);
 
   //Inicialització de les variables monitoritzades
-  data[1].ID = 1;
-  data[1].SetName("ID");
-  data[1].SetcValue(devId);
-  //data[1].SetTag("sensors/");
+  initDataPoints();
   
-  data[2].ID = 2;
-  data[2].SetName("IPAddr");
-  data[2].SetcValue("x.1.113");
-  //data[2].SetTag("sensors/");
-  
-  data[3].ID = 1;
-  data[3].SetName("Temp");
-  data[3].SetcValue("");
-  //data[1].SetTag("sensors/");
-  
-  data[4].ID = 1;
-  data[4].SetName("HR");
-  data[4].SetcValue("");
-  //data[4].SetTag("sensors/");
-  
-  
+  //Mostra les dades per la consola
   Serial.println("");
   Serial.println("*** Sensor DATA ***");
   Serial.print("-> Sensor ID: "); Serial.println(devId);
@@ -122,25 +126,30 @@ void setup(void){
   Serial.print("-> Sensor room: "); Serial.println(devRoom);
   Serial.println("*******************");
   
+  //Arrenca la Wifi
   WiFi.begin(ssid, password);
   Serial.println("");
 
-  // Wait for connection
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
+	  // Wait for connection
+	  while (WiFi.status() != WL_CONNECTED) {
+		delay(500);
+		Serial.print(".");
+	  }
   
-  Serial.println("");
-  Serial.print("Connected to ");
-  Serial.println(ssid);
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+	  Serial.println("");
+	  Serial.print("Connected to ");
+	  Serial.println(ssid);
+	  Serial.print("IP address: ");
+	  Serial.println(WiFi.localIP());
+	  //Arrenca la WiFi [end]
 
-  if (MDNS.begin("esp8266")) {
-    Serial.println("MDNS responder started");
-  }
-  
+  //Multicast DNS
+	if (MDNS.begin(strcat("ESP_", devId))) {
+		Serial.println("MDNS responder started");
+	}
+	MDNS.addService("http", "tcp", 80);
+  //Multicast DNS[end]
+
   //WebServer[begin]
   webSrv.on("/", webSrv_handleRoot);
   webSrv.on("/inline", [](){
@@ -155,7 +164,7 @@ void setup(void){
 
   //MQTT[begin]
   #ifdef MQTT
-    MQTTclient.setServer(brokerAddress, 1883);
+    MQTTclient.setServer(brokerAddress, brokerPort);
     MQTTclient.setCallback(mqtt_callback);
     char mqtt_buidTag();
   #endif
@@ -164,70 +173,149 @@ void setup(void){
   #ifdef DHT22
     tempSensor.begin();
   #endif
+
+	//Data points
+	for (int idx = 0; idx < usedDataPoints; idx++)
+	{
+		char cDummy[MAX_MQTT_TAG_LENGTH];
+
+		if (dataPoints[idx].GetType() == deviceParameter) {
+			sprintf(cDummy, "sensor/%s/%s", devId, dataPoints[idx].GetName());
+		}
+		else if (dataPoints[idx].GetType() == sensedValue) {
+			sprintf(cDummy, "%s/%s/%s", devLocation, devRoom, dataPoints[idx].GetName());
+		}
+		else {
+			strcpy(cDummy, "other");
+		}
+
+		dataPoints[idx].SetTag(cDummy);
+		Serial.println(cDummy);
+	}
+
+	char cDummy[MAX_MQTT_TAG_LENGTH];
+		WiFi.localIP().toString().toCharArray(cDummy, MAX_MQTT_TAG_LENGTH);
+	dataPoints[DP_IPADDR].SetcValue(cDummy);
+		WiFi.SSID().toCharArray(cDummy, MAX_MQTT_TAG_LENGTH);
+	dataPoints[DP_SSID].SetcValue(cDummy);
+		MDNS.hostname(0).toCharArray(cDummy, MAX_MQTT_TAG_LENGTH);
+	dataPoints[DP_WEBURL].SetcValue(cDummy);
+	dataPoints[DP_LOCATION].SetcValue(devLocation);
+	dataPoints[DP_ROOM].SetcValue(devRoom);
+	//Data points [END]
 }
 
 void loop(void){
 
   counter ++;
   webSrv.handleClient();
-  // put your main code here, to run repeatedly:
+
+
   if (!MQTTclient.connected()) {
     mqtt_reconnect();
-    //MQTTclient.subscribe("home/temp2");
   }
 
   #ifdef DHT22
   
-    //tempAns = tempSensor.read11(DHT11_PIN);
+    //Read relative humidity [%]
     float RH = tempSensor.readHumidity();
     
-    // Read temperature as Celsius (the default)
-    float T = tempSensor.readTemperature();
-
-
-
     // Check if any reads failed and exit early (to try again).
-    if (not(isnan(RH))){
-      //dtostrf(RH, 1, 1, strRH);
-      //snprintf(MQTTvalue, 64, "%f", RH);
-      dtostrf(RH, 1, 1, MQTTvalue);
+    if (!(isnan(RH))){
+		char cDummy[MAX_MQTT_TAG_LENGTH];
+      dtostrf(RH, 1, 1, cDummy);
+	  dataPoints[DP_HR].SetcValue(cDummy);
 
-      snprintf(MQTTtag, MAX_MQTT_TAG_LENGTH, "%s/%s/%s", devLocation, devRoom, "RH");
-      MQTTclient.publish(MQTTtag, MQTTvalue);
-      Serial.print("Humidity: ");
-      Serial.println(RH);
+	  Serial.print(dataPoints[DP_HR].GetName());
+	  Serial.print(": ");
+	  Serial.println(RH);
     } else {
       Serial.println("Failed to read RH from DHT sensor!");
     }
       
-      
-    if (not(isnan(T))) {
-      //dtostrf(T, 1, 1, MQTTvalue);
-      //snprintf(MQTTvalue, 64, "%f", T);
-      dtostrf(T, 1, 1, MQTTvalue);
-      snprintf(MQTTtag, MAX_MQTT_TAG_LENGTH, "%s/%s/%s", devLocation, devRoom, "T");
-      MQTTclient.publish(MQTTtag, MQTTvalue);
-      Serial.print("Temperature: ");
-      Serial.println(T);
+	// Read temperature as Celsius (the default)
+	float T = tempSensor.readTemperature();
+    if (!(isnan(T))) {
+		char cDummy[MAX_MQTT_TAG_LENGTH];
+      dtostrf(T, 1, 1, cDummy);
+	  dataPoints[DP_TEMP].SetcValue(cDummy);
+
+	  Serial.print(dataPoints[DP_TEMP].GetName());
+	  Serial.print(": ");
+	  Serial.println(T);
+
      } else {
-      Serial.println("Failed to read RH from DHT sensor!");
+      Serial.println("Failed to read Temperature from DHT sensor!");
      }
    
-  #endif
+  #endif //DHT22
 
-  //Publica l'ID a 'devLocation/devRoom/ID'
-  snprintf(MQTTtag, MAX_MQTT_TAG_LENGTH, "%s/%s/%s", devLocation, devRoom, "ID");
-  MQTTclient.publish(MQTTtag, devId);
-  
-  //Publica el comptador a 'devLocation/devRoom/counter'
-  snprintf(MQTTvalue, MAX_MQTT_TAG_LENGTH, "%d", counter);
-  snprintf(MQTTtag, MAX_MQTT_TAG_LENGTH, "%s/%s/%s", devLocation, devRoom, "counter");
-  MQTTclient.publish(MQTTtag, MQTTvalue);
-  
+	//MQTT Publish
+	for (uint idx = 0; idx < usedDataPoints; idx++)
+	{
+		//Serial.println("Printing from the MQTT for loop");
+		//char topic[MAX_MQTT_TAG_LENGTH + 1], value[MAX_MQTT_TAG_LENGTH + 1];
+		//strcpy(topic, dataPoints[idx].GetTag());
+		//strcpy(value, dataPoints[idx].GetcValue());
+
+		//Serial.print("Topic: ");
+		//Serial.println(topic);
+
+		//Serial.print("Value: ");
+		//Serial.println(value);
+
+		MQTTclient.publish(dataPoints[idx].GetTag(), dataPoints[idx].GetcValue());
+	}
+
   MQTTclient.loop();
   delay(5000);
 }
 
+
+void initDataPoints(){
+
+	dataPoints[DP_ID].ID = DP_ID;
+	dataPoints[DP_ID].SetName("ID");
+	dataPoints[DP_ID].SetcValue(devId);
+	dataPoints[DP_ID].SetType(deviceParameter);
+
+	dataPoints[DP_IPADDR].ID = DP_IPADDR;
+	dataPoints[DP_IPADDR].SetName("IPAddr");
+	//dataPoints[DP_IPADDR].SetcValue("192.168.1.113");//WiFi.localIP().toString().toCharArray());
+	dataPoints[DP_IPADDR].SetType(deviceParameter);
+
+	dataPoints[DP_SSID].ID = DP_SSID;
+	dataPoints[DP_SSID].SetName("SSID");
+	//dataPoints[DP_SSID].SetcValue(ssid);
+	dataPoints[DP_SSID].SetType(deviceParameter);
+	
+	dataPoints[DP_WEBURL].ID = DP_WEBURL;
+	dataPoints[DP_WEBURL].SetName("webURL");
+	//dataPoints[DP_WEBURL].SetcValue("");
+	dataPoints[DP_WEBURL].SetType(deviceParameter);
+	
+	dataPoints[DP_LOCATION].ID = DP_LOCATION;
+	dataPoints[DP_LOCATION].SetName("location");
+	//dataPoints[DP_LOCATION].SetcValue("");
+	dataPoints[DP_LOCATION].SetType(deviceParameter);
+
+	dataPoints[DP_ROOM].ID = DP_ROOM;
+	dataPoints[DP_ROOM].SetName("room");
+	//dataPoints[DP_ROOM].SetcValue("");
+	dataPoints[DP_ROOM].SetType(deviceParameter);
+
+	dataPoints[DP_TEMP].ID = DP_TEMP;
+	dataPoints[DP_TEMP].SetName("temp");
+	//dataPoints[DP_TEMP].SetcValue("");
+	dataPoints[DP_TEMP].SetType(sensedValue);
+	
+	dataPoints[DP_HR].ID = DP_HR;
+	dataPoints[DP_HR].SetName("hr");
+	//dataPoints[DP_HR].SetcValue("");
+	dataPoints[DP_HR].SetType(sensedValue);
+
+	usedDataPoints = 8;
+	}
 
 void mqtt_reconnect() {
   // Loop until we're reconnected
