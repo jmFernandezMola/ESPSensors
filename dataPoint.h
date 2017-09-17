@@ -37,8 +37,8 @@ class dataPoint
 		tDataType GetType() { return m_type; }
 
         double GetdValue() { return m_dValue; }
-		int GetiValue();
-        unsigned int GetuiValue();
+		int GetiValue() { return m_iValue; }
+		unsigned int GetuiValue() { return m_uiValue; }
 		char * GetcValue() { return m_cValue; }
 
 

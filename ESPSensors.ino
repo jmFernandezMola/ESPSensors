@@ -3,6 +3,7 @@
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
+#include <ESP8266httpUpdateServer.h>
 //#include <map>
 
 //#ifdef MQTT
@@ -21,9 +22,9 @@
  * 
  * (només n'hi pot haver un de definit)
 */
-#define SENSOR_ID   "S3"
+#define SENSOR_ID   "S1"
 #define SENSOR_LOC  0
-#define SENSOR_ROOM 5
+#define SENSOR_ROOM 0
 
 /*********************************************/
 
@@ -50,6 +51,7 @@ const char* password = "Anillo_Unico";
  * Servidor web
  */
 ESP8266WebServer webSrv(80);
+ESP8266HTTPUpdateServer httpUpdater;
 /***************************************************/
 
 /********************************************
@@ -61,7 +63,7 @@ uint16_t brokerPort = 1883;
 	/*remote*/
 	//char brokerAddress[] = { "elponipisador.ddns.net" };
 	//uint16_t brokerPort = 61883;
-PubSubClient MQTTclient(brokerAddress, 1883, espClient);
+PubSubClient MQTTclient(brokerAddress, brokerPort, espClient);
 
 char locations[MAX_MQTT_LOCATIONS][MAX_MQTT_STRING_LENGTH+1]={"home", "gufe", "cosu", "mollo", "vella","","","","",""};
 int locations_count = 5;
@@ -80,9 +82,10 @@ char MQTTtag[MAX_MQTT_TAG_LENGTH];
 #define DP_WEBURL		3
 #define DP_LOCATION		4
 #define	DP_ROOM			5
-#define DP_TEMP			6
-#define DP_HR			7
-uint usedDataPoints = 8;
+#define DP_UPDATERATE	6
+#define DP_TEMP			7
+#define DP_HR			8
+uint usedDataPoints = 9;
 /***********************************************/
 
 
@@ -101,6 +104,7 @@ dataPoint dataPoints[MAX_DATA_POINTS];
   DHT tempSensor(DHT_PIN, DHTTYPE);
 #endif
 
+unsigned long updateRate = 60000;  //in ms
 int counter;
 char * strT;
 char * strRH;
@@ -124,9 +128,11 @@ void setup(void){
   Serial.print("-> Sensor ID: "); Serial.println(devId);
   Serial.print("-> Sensor location: "); Serial.println(devLocation);//devLocation);
   Serial.print("-> Sensor room: "); Serial.println(devRoom);
+  Serial.print("-> Update rate: "); Serial.println(updateRate);
   Serial.println("*******************");
   
   //Arrenca la Wifi
+  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   Serial.println("");
 
@@ -157,8 +163,11 @@ void setup(void){
   });
   webSrv.onNotFound(webSrv_handleNotFound);
 
+  httpUpdater.setup(&webSrv);
+
   webSrv.begin();
   Serial.println("HTTP server started");
+  Serial.println("HTTPUpdateServer ready! Update at http://<ipaddress>/update");
   //WebServer[end]
 
 
@@ -167,11 +176,13 @@ void setup(void){
     MQTTclient.setServer(brokerAddress, brokerPort);
     MQTTclient.setCallback(mqtt_callback);
     char mqtt_buidTag();
+
   #endif
   //MQTT[end]
 
   #ifdef DHT22
     tempSensor.begin();
+	delay(2000); //deixa un temps per estabilitzar el sensor
   #endif
 
 	//Data points
@@ -202,6 +213,7 @@ void setup(void){
 	dataPoints[DP_WEBURL].SetcValue(cDummy);
 	dataPoints[DP_LOCATION].SetcValue(devLocation);
 	dataPoints[DP_ROOM].SetcValue(devRoom);
+	dataPoints[DP_UPDATERATE].SetuiValue(updateRate);
 	//Data points [END]
 }
 
@@ -264,11 +276,18 @@ void loop(void){
 		//Serial.print("Value: ");
 		//Serial.println(value);
 
-		MQTTclient.publish(dataPoints[idx].GetTag(), dataPoints[idx].GetcValue());
+		MQTTclient.publish(dataPoints[idx].GetTag(), dataPoints[idx].GetcValue(), true);
 	}
+	
+	//Subscriptions
+	//MQTTclient.subscribe(dataPoints[DP_UPDATERATE].GetTag());
+	//MQTTclient.subscribe(dataPoints[DP_TEMP].GetTag());
 
   MQTTclient.loop();
-  delay(5000);
+
+  Serial.println("A dormir!!!");
+  ESP.deepSleep(updateRate*1000);
+  //delay(updateRate);
 }
 
 
@@ -304,6 +323,11 @@ void initDataPoints(){
 	//dataPoints[DP_ROOM].SetcValue("");
 	dataPoints[DP_ROOM].SetType(deviceParameter);
 
+	dataPoints[DP_UPDATERATE].ID = DP_UPDATERATE;
+	dataPoints[DP_UPDATERATE].SetName("update Rate");
+	//dataPoints[DP_ROOM].SetcValue("");
+	dataPoints[DP_UPDATERATE].SetType(deviceParameter);
+
 	dataPoints[DP_TEMP].ID = DP_TEMP;
 	dataPoints[DP_TEMP].SetName("temp");
 	//dataPoints[DP_TEMP].SetcValue("");
@@ -314,7 +338,7 @@ void initDataPoints(){
 	//dataPoints[DP_HR].SetcValue("");
 	dataPoints[DP_HR].SetType(sensedValue);
 
-	usedDataPoints = 8;
+	usedDataPoints = 9;
 	}
 
 void mqtt_reconnect() {
