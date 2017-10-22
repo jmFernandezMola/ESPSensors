@@ -7,6 +7,7 @@
 enum tDataType{
 	deviceParameter = 0x00,
 	sensedValue = 0x01,
+	systemValue = 0x02,
 };
 
 class dataPoint

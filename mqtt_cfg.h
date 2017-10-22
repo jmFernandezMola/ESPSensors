@@ -8,6 +8,7 @@
   #define MAX_MQTT_ROOMS    15
   #define MAX_MQTT_STRING_LENGTH    8
   #define MAX_MQTT_TAG_LENGTH   32
+  #define MAX_MQTT_RETRIES	5
 //#endif
 
 #endif

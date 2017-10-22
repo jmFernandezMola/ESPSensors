@@ -12,6 +12,8 @@
 
 #include "dataPoint.h"
 
+#define FW_VERSION	"1.0"
+
 #define WEB_SERVER
 #define MQTT
 #define OLED
@@ -22,9 +24,9 @@
  * 
  * (només n'hi pot haver un de definit)
 */
-#define SENSOR_ID   "S1"
+#define SENSOR_ID   "S2"
 #define SENSOR_LOC  0
-#define SENSOR_ROOM 0
+#define SENSOR_ROOM 2
 
 /*********************************************/
 
@@ -85,7 +87,10 @@ char MQTTtag[MAX_MQTT_TAG_LENGTH];
 #define DP_UPDATERATE	6
 #define DP_TEMP			7
 #define DP_HR			8
-uint usedDataPoints = 9;
+#define DP_UPDATEREQUEST	9
+#define DP_UPDATEDEVICE		10
+#define DP_UPDATEVERSION	11
+uint usedDataPoints = 12;
 /***********************************************/
 
 
@@ -104,10 +109,16 @@ dataPoint dataPoints[MAX_DATA_POINTS];
   DHT tempSensor(DHT_PIN, DHTTYPE);
 #endif
 
-unsigned long updateRate = 60000;  //in ms
-int counter;
-char * strT;
-char * strRH;
+/************************************************
+* Informació sobre el sistema de sensors
+*/
+	unsigned long updateRate = 15000;  //in ms
+	int counter;
+	char * strT;
+	char * strRH;
+	byte updateRequested = 0;
+/***********************************************/
+
 
 void setup(void){
 
@@ -182,7 +193,7 @@ void setup(void){
 
   #ifdef DHT22
     tempSensor.begin();
-	delay(2000); //deixa un temps per estabilitzar el sensor
+	delay(5000); //deixa un temps per estabilitzar el sensor
   #endif
 
 	//Data points
@@ -195,6 +206,9 @@ void setup(void){
 		}
 		else if (dataPoints[idx].GetType() == sensedValue) {
 			sprintf(cDummy, "%s/%s/%s", devLocation, devRoom, dataPoints[idx].GetName());
+		}
+		else if (dataPoints[idx].GetType() == systemValue) {
+			sprintf(cDummy, "system/update/%s", dataPoints[idx].GetName());
 		}
 		else {
 			strcpy(cDummy, "other");
@@ -263,31 +277,43 @@ void loop(void){
   #endif //DHT22
 
 	//MQTT Publish
-	for (uint idx = 0; idx < usedDataPoints; idx++)
-	{
-		//Serial.println("Printing from the MQTT for loop");
-		//char topic[MAX_MQTT_TAG_LENGTH + 1], value[MAX_MQTT_TAG_LENGTH + 1];
-		//strcpy(topic, dataPoints[idx].GetTag());
-		//strcpy(value, dataPoints[idx].GetcValue());
+	if (MQTTclient.connected()) {
+		Serial.println("MQTT is connected. Proceeding with the MQTT update");
+		for (uint idx = 0; idx < usedDataPoints; idx++)
+		{
+			//Serial.println("Printing from the MQTT for loop");
+			//char topic[MAX_MQTT_TAG_LENGTH + 1], value[MAX_MQTT_TAG_LENGTH + 1];
+			//strcpy(topic, dataPoints[idx].GetTag());
+			//strcpy(value, dataPoints[idx].GetcValue());
 
-		//Serial.print("Topic: ");
-		//Serial.println(topic);
+			//Serial.print("Topic: ");
+			//Serial.println(topic);
 
-		//Serial.print("Value: ");
-		//Serial.println(value);
+			//Serial.print("Value: ");
+			//Serial.println(value);
 
-		MQTTclient.publish(dataPoints[idx].GetTag(), dataPoints[idx].GetcValue(), true);
+			MQTTclient.publish(dataPoints[idx].GetTag(), dataPoints[idx].GetcValue(), false);
+		}
+
+		//Subscriptions
+		MQTTclient.subscribe(dataPoints[DP_UPDATEREQUEST].GetTag());
+		MQTTclient.subscribe(dataPoints[DP_UPDATEDEVICE].GetTag());
+		MQTTclient.subscribe(dataPoints[DP_UPDATEVERSION].GetTag());
+
+
+		MQTTclient.loop();
 	}
-	
-	//Subscriptions
-	//MQTTclient.subscribe(dataPoints[DP_UPDATERATE].GetTag());
-	//MQTTclient.subscribe(dataPoints[DP_TEMP].GetTag());
-
-  MQTTclient.loop();
+	else {
+		Serial.println("Error in the MQTT connection... values not sent.");
+	}
+  
 
   Serial.println("A dormir!!!");
-  ESP.deepSleep(updateRate*1000);
-  //delay(updateRate);
+  Serial.flush();
+
+   
+  //ESP.deepSleep(updateRate*1000);
+  delay(updateRate);
 }
 
 
@@ -324,7 +350,7 @@ void initDataPoints(){
 	dataPoints[DP_ROOM].SetType(deviceParameter);
 
 	dataPoints[DP_UPDATERATE].ID = DP_UPDATERATE;
-	dataPoints[DP_UPDATERATE].SetName("update Rate");
+	dataPoints[DP_UPDATERATE].SetName("updateRate");
 	//dataPoints[DP_ROOM].SetcValue("");
 	dataPoints[DP_UPDATERATE].SetType(deviceParameter);
 
@@ -338,10 +364,27 @@ void initDataPoints(){
 	//dataPoints[DP_HR].SetcValue("");
 	dataPoints[DP_HR].SetType(sensedValue);
 
-	usedDataPoints = 9;
+	dataPoints[DP_UPDATEREQUEST].ID = DP_UPDATEREQUEST;
+	dataPoints[DP_UPDATEREQUEST].SetName("upReq");
+	//dataPoints[DP_HR].SetcValue("");
+	dataPoints[DP_UPDATEREQUEST].SetType(systemValue);
+
+	dataPoints[DP_UPDATEDEVICE].ID = DP_UPDATEDEVICE;
+	dataPoints[DP_UPDATEDEVICE].SetName("upDev");
+	//dataPoints[DP_HR].SetcValue("");
+	dataPoints[DP_UPDATEDEVICE].SetType(systemValue);
+
+	dataPoints[DP_UPDATEVERSION].ID = DP_UPDATEVERSION;
+	dataPoints[DP_UPDATEVERSION].SetName("upVer");
+	//dataPoints[DP_HR].SetcValue("");
+	dataPoints[DP_UPDATEVERSION].SetType(systemValue);
+
+	usedDataPoints = 12;
 	}
 
 void mqtt_reconnect() {
+	static int numRetries = 0;
+
   // Loop until we're reconnected
   while (!MQTTclient.connected()) {
     Serial.print("Attempting MQTT connection...");
@@ -350,11 +393,26 @@ void mqtt_reconnect() {
       Serial.println("connected");
 
     } else {
-      Serial.print("failed, rc=");
-      Serial.print(MQTTclient.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
+		if (WiFi.status() != WL_CONNECTED) {
+			//do nothing
+			Serial.println("AT mqtt_reconnect - WiFi is connected");
+			ESP.restart();
+		}
+		else if (numRetries <= MAX_MQTT_RETRIES) {
+			numRetries++;
+			Serial.print("failed, rc=");
+			Serial.print(MQTTclient.state());
+			Serial.println(" try again in 5 seconds");
+
+			Serial.println("AT mqtt_reconnect - Min retries");
+			// Wait 5 seconds before retrying
+			delay(5000);
+		}
+		else {
+			//do nothing
+			Serial.println("AT mqtt_reconnect - ELSE -> Restarting");
+			ESP.restart();
+		}
     }
   }
 }
