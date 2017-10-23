@@ -7,7 +7,7 @@ Created on Sun Oct 22 22:49:17 2017
 
 import paho.mqtt.client as mqtt
 from influxdb import InfluxDBClient
-import time
+from datetime import datetime
 
 
 # The callback for when the client receives a CONNACK response from the server.
@@ -20,19 +20,19 @@ def on_connect(MQTTclient, userdata, flags, rc):
 
 # The callback for when a PUBLISH message is received from the server.
 def on_message(MQTTclient, userdata, msg):
-	print(msg.topic+" "+str(msg.payload))
-	json_body = [
-		{
-		"measurement": "measurement",
-		"tags": {
-			"type": msg.topic.split('/')[2],
-			"location": msg.topic.split('/')[1]
-		},
-		"fields": {
-			"value": (float(msg.payload))
-			}
-		}
-	]
+	print(str(datetime.now()) + " - " + msg.topic+" "+str(msg.payload))
+#	json_body = [
+#		{
+#		"measurement": "measurement",
+#		"tags": {
+#			"type": msg.topic.split('/')[2],
+#			"location": msg.topic.split('/')[1]
+#		},
+#		"fields": {
+#			"value": (float(msg.payload))
+#			}
+#		}
+#	]
 	#print(json_body)
 	#ifClient.write(json_body,protocol='json')
 	#ifClient.write_points(json_body, database='openhab', protocol='json')
@@ -42,7 +42,7 @@ def on_message(MQTTclient, userdata, msg):
 	try:
 		ifClient.write_points(line, database='openhab', protocol='line')
 	except :
-		print("Error sending data to InfluxDB")
+		print(str(datetime.now()), " - Error sending data to InfluxDB")
 
 
 #line = [msg.topic.split('/')[2] + "_test " + float(msg.payload)]
