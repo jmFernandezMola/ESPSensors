@@ -59,7 +59,7 @@ MQTTclient.connect("192.168.1.92", 1883, 60)
 #INFLUX
 ifClient = InfluxDBClient(host='192.168.1.92', port=8086, username='root', password='root', database='openhab')
 print(ifClient.get_list_database())
-client.switch_database('openhab')
+ifClient.switch_database('openhab')
 
 # Blocking call that processes network traffic, dispatches callbacks and
 # handles reconnecting.
